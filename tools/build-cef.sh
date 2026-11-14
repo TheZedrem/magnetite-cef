@@ -485,9 +485,12 @@ local_build() {
     # Looked for in its parent's listing: a mount whose ciopfs died cannot be
     # looked at itself, but is listed. (Read whole first: grep -q stopping
     # early would fail the pipe.)
-    local sdk="$SRC/third_party/depot_tools/win_toolchain/vs_files" mounted=0 listing
-    listing="$(ls -A "$(dirname "$sdk")" 2> /dev/null || true)"
-    if [[ -n "$CEF_TARGET" ]] && grep -qxF vs_files <<< "$listing"; then
+    local sdk="$SRC/third_party/depot_tools/win_toolchain/vs_files" mounted=0 listing=""
+    if [[ -n "$CEF_TARGET" && -d "$(dirname "$sdk")" ]]; then
+      listing="$(ls -A "$(dirname "$sdk")")" ||
+        fail "Cannot list $(dirname "$sdk") to look for the Windows SDK's mount. Make it readable or unmount the SDK (fusermount -u $sdk), then build with CEF_FRESH=true again."
+    fi
+    if grep -qxF vs_files <<< "$listing"; then
       # 0 mounted, 32 not; anything else (no mountpoint, a dead mount) is
       # no answer, and rm would delete the SDK through the mount.
       mountpoint -q "$sdk" || mounted=$?
