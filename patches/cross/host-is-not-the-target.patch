@@ -1,0 +1,32 @@
+diff --git a/tools/gn_args.py b/tools/gn_args.py
+index 8124a30..c20dadd 100644
+--- a/tools/gn_args.py
++++ b/tools/gn_args.py
+@@ -88,6 +88,12 @@ else:
+   print('Unknown operating system platform')
+   sys.exit()
+ 
++# Magnetite: a cross build is configured for the platform it builds for, not
++# the one it runs on (x64 only).
++if 'MAGNETITE_TARGET_PLATFORM' in os.environ:
++  platform = os.environ['MAGNETITE_TARGET_PLATFORM']
++  machine = 'amd64'
++
+ _QUIET = False
+ 
+ 
+diff --git a/tools/make_distrib.py b/tools/make_distrib.py
+index b360544..b0b5896 100644
+--- a/tools/make_distrib.py
++++ b/tools/make_distrib.py
+@@ -841,7 +841,9 @@ def main(argv=None):
+   parser = create_option_parser()
+   (options, args) = parser.parse_args(args=argv)
+ 
+-  platform = get_platform(sys.platform)
++  # Magnetite: a cross build packages for the platform it was built for.
++  platform = os.environ.get('MAGNETITE_TARGET_PLATFORM') or get_platform(
++      sys.platform)
+   validation_error = validate_options(options, platform)
+   if validation_error:
+     print_error(validation_error)

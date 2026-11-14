@@ -143,6 +143,55 @@ tools/build-cef.sh publish-local      # create the release
 Build releases only on a machine you would trust with Magnetite's signing
 key: what it builds ends up in every Magnetite release.
 
+## Windows, built on Linux (an untested experiment)
+
+Nothing of this has run yet. Actions → Build CEF for Windows (experiment)
+builds CEF for Windows on x86_64 on our Linux runner, with Chromium's cross
+build (`docs/win_cross.md` in Chromium), and leaves the minimal distribution
+(`cef_binary_<version>_windows64_minimal.tar.bz2`) as an artifact of the run.
+It releases nothing. CEF itself supports building for Windows on Windows
+only.
+
+What takes long runs on our runner, what is quick and needs Windows on
+GitHub's:
+
+1. **toolchain**, on GitHub's Windows runner, when "toolchain" is ticked:
+   installs the Windows SDK Chromium asks for, packages it and the image's
+   Visual Studio 2026 with depot_tools' `package_from_installed.py`, and
+   hands the package to the next job as an encrypted artifact. Tick it for
+   the first run; the package then stays on the Linux runner
+   (`~/cef-windows64-toolchain`) until Chromium asks for another toolchain,
+   which stops the build with a message.
+2. **build**, on our Linux runner: checks out a tree of its own
+   (`~/cef-windows64`, another 200 GB), builds with `target_os="win"` and
+   makes the distribution.
+3. **check**, on GitHub's Windows runner: loads the distribution's
+   `libcef.dll`. Whether CEF works, only Magnetite shows.
+
+It needs:
+
+- the repository secret `WIN_TOOLCHAIN_KEY`, any long random text
+  (`openssl rand -base64 32`). Artifacts of a public repository are open to
+  everyone, and Microsoft's files are not ours to give away, so the package
+  travels encrypted and its artifact is deleted after a day;
+- on the Linux runner `openssl` and `fusermount` (FUSE 2, the package
+  `fuse`): Chromium mounts the Windows SDK in a folder that ignores case.
+
+CEF's tools take the platform from the machine they run on.
+`patches/cross/host-is-not-the-target.patch`, applied in a cross build only,
+lets `tools/build-cef.sh` name it instead; with it CEF writes the GN args it
+writes on Windows. The archive's patch list leaves it out.
+
+Known or open:
+
+- Chromium's cross build leaves out its assembler files, so Crashpad cannot
+  report crashes (`docs/win_cross.md`).
+- Whether Microsoft's licence lets us copy the runner's Visual Studio
+  Enterprise to a machine of ours is not checked.
+- By hand, on the Linux machine, with a package from `win-toolchain` in
+  `~/cef-windows64-toolchain/<toolchain hash>/`:
+  `CEF_TARGET=windows64 tools/build-cef.sh local`.
+
 ## Our own machines as runners
 
 ### Linux

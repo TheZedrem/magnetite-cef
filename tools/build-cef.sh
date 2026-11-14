@@ -8,14 +8,25 @@
 #   release-state           is the release made already (a re-run)?
 #   publish                 create the release with every platform's archive
 #
+# An untested experiment: with CEF_TARGET=windows64 on Linux, `local` builds
+# for Windows on x86_64 (windows64) instead, in a tree of its own
+# (README, "Windows, built on Linux"). It has three stages of its own:
+#
+#   win-toolchain           on Windows: package Visual Studio and the SDK
+#   win-toolchain-unpack    on Linux: take that package into the tree's folder
+#   win-check               on Windows: does the archive's libcef.dll load?
+#
+# .github/workflows/build-windows.yml runs them; it releases nothing.
+#
 # .github/workflows/build.yml runs `local` on our own runners, one per
 # platform, and the last two in its publish job. On a machine of your own, `local` and `publish-local`
 # do the same without the workflow (README, "Building on a machine of our
 # own").
 #
 # Settings come from the environment: CEF_VERSION (required), CEF_REVISION,
-# DEPOT_TOOLS_COMMIT, CEF_WORK for the folder to build in (default ~/cef) and
-# CEF_FRESH=true to delete that folder first.
+# DEPOT_TOOLS_COMMIT, CEF_WORK for the folder to build in (default ~/cef, for
+# CEF_TARGET=windows64 ~/cef-windows64) and CEF_FRESH=true to delete that
+# folder first.
 # Written for bash 3.2, the bash of macOS.
 #
 # Based on OpenArch's scripts/cef-codecs.sh
@@ -53,18 +64,37 @@ DEPOT_TOOLS_COMMIT="${DEPOT_TOOLS_COMMIT:-132599ebbd8d22d1b1bd5ea703a6d3bc493edd
 #                (AutomatedBuildSetup in CEF's wiki): on Linux, Chromium's
 #                Debian sysroot instead of the host's libraries, and no CFI.
 OS="$(uname -s)"
-case "$OS-$(uname -m)" in
-  Darwin-arm64)
+CEF_TARGET="${CEF_TARGET:-}"
+case "$OS-$(uname -m):$CEF_TARGET" in
+  Darwin-arm64:)
     ARCH=arm64 PLATFORM=macosarm64 TARGETS=cefclient PLATFORM_GN=""
     ;;
-  Linux-x86_64)
+  Linux-x86_64:)
     # Not cefclient: it needs GTK's headers, which CEF leaves out with
     # use_sysroot=true, and the distribution takes nothing from it.
     ARCH=x64 PLATFORM=linux64 TARGETS="libcef chrome_sandbox"
     PLATFORM_GN="use_sysroot=true is_cfi=false"
     ;;
+  # The experiment. On Linux the build; under Git Bash on Windows only
+  # win-toolchain and win-check.
+  Linux-x86_64:windows64 | MINGW*-x86_64:windows64)
+    # The targets of CEF's official builds (automate-git.py).
+    ARCH=x64 PLATFORM=windows64 TARGETS="cefclient bootstrap bootstrapc"
+    # Chromium's cross build (docs/win_cross.md). Its tools for the build
+    # machine use the Debian sysroot, GN's default.
+    PLATFORM_GN="target_os=win"
+    # CEF's tools take the platform from the machine they run on; with
+    # patches/cross/ they take it from here.
+    export MAGNETITE_TARGET_PLATFORM=windows
+    # The Windows SDK that Chromium's build/vs_toolchain.py asks for
+    # (SDK_VERSION) and GitHub's Windows image lacks: Microsoft's installer
+    # for it, as winget's Microsoft.WindowsSDK.10.0.28000 names it.
+    WIN_SDK_VERSION=10.0.28000.0
+    WIN_SDK_URL=https://download.microsoft.com/download/e6cfffdc-0d3e-4c6c-96d7-d491da459a07/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/winsdksetup.exe
+    WIN_SDK_SHA256=e8e264aca8bc34abdf592352bf09f986a85cdb96db0efba405ca9e149181fe61
+    ;;
   *)
-    echo "::error::This builds CEF on macOS on Apple silicon or Linux on x86_64, not $OS $(uname -m)." >&2
+    echo "::error::This builds CEF on macOS on Apple silicon or Linux on x86_64 (with CEF_TARGET=windows64: for Windows), not $OS $(uname -m) with CEF_TARGET='$CEF_TARGET'." >&2
     exit 1
     ;;
 esac
@@ -72,7 +102,19 @@ esac
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # The tree: depot_tools, Chromium with CEF in it, and the build output. It
 # stays between builds, so the next one only does what changed.
-WORK="${CEF_WORK:-$HOME/cef}"
+WORK="${CEF_WORK:-$HOME/cef${CEF_TARGET:+-$CEF_TARGET}}"
+# Git Bash gets the runner's folders as Windows paths; tar takes "D:" for a
+# machine's name.
+if [[ "$OS" == MINGW* && -n "${RUNNER_TEMP:-}" ]]; then
+  RUNNER_TEMP="$(cygpath -u "$RUNNER_TEMP")"
+fi
+# The cross build's Visual Studio and Windows SDK, packaged by win-toolchain:
+# <the toolchain Chromium asks for>/<the package's hash>.zip. Next to the
+# tree, so CEF_FRESH leaves it.
+WIN_TOOLCHAIN="$WORK-toolchain"
+# patches/ and, for a cross build, the changes to CEF's tools on top.
+PATCHES=("$REPO_DIR"/patches/*.patch)
+if [[ -n "$CEF_TARGET" ]]; then PATCHES+=("$REPO_DIR"/patches/cross/*.patch); fi
 SRC="$WORK/chromium/src"
 OUT="$SRC/out/Release_GN_$ARCH"
 NINJA="$SRC/third_party/ninja/ninja"
@@ -169,19 +211,23 @@ sync() {
   local hooks='  run("gclient runhooks", chromium_dir)'
   [[ "$(grep -cxF -- "$hooks" "$WORK/automate-git.orig.py")" == 1 ]] ||
     fail "automate-git.py has changed: no single line '$hooks' to fix it at (issue #6)"
-  awk -v hooks="$hooks" '{ print } $0 == hooks {
-    print "  if cef_dir == cef_src_dir:"
-    print "    run_patch_updater(\"--revert --patch runhooks\")"
-  }' "$WORK/automate-git.orig.py" > "$WORK/automate-git.py"
-  # depot_tools at DEPOT_TOOLS_COMMIT, set up as update_depot_tools would
-  # (its packages and Python), without moving it (its scripts do not run
-  # under `set -u`).
-  if [[ ! -d "$WORK/depot_tools" ]]; then
-    git clone --quiet https://chromium.googlesource.com/chromium/tools/depot_tools.git "$WORK/depot_tools"
-  else
-    git -C "$WORK/depot_tools" fetch --quiet origin
-  fi
-  git -C "$WORK/depot_tools" checkout --quiet "$DEPOT_TOOLS_COMMIT"
+  # A cross build's .gclient also names the platform it is for, so gclient
+  # fetches what a build for Windows needs (Chromium's docs/win_cross.md).
+  # The tool writes the file once, with the first checkout.
+  local gclient='      "}]"'
+  [[ -z "$CEF_TARGET" || "$(grep -cxF -- "$gclient" "$WORK/automate-git.orig.py")" == 1 ]] ||
+    fail "automate-git.py has changed: no single line '$gclient' to end .gclient at"
+  GCLIENT_END="      \"}]\\ntarget_os = ['win']\"" awk -v hooks="$hooks" \
+    -v gclient="$gclient" -v cross="$CEF_TARGET" '
+    cross != "" && $0 == gclient { print ENVIRON["GCLIENT_END"]; next }
+    { print }
+    $0 == hooks {
+      print "  if cef_dir == cef_src_dir:"
+      print "    run_patch_updater(\"--revert --patch runhooks\")"
+    }' "$WORK/automate-git.orig.py" > "$WORK/automate-git.py"
+  # depot_tools, set up as update_depot_tools would (its packages and
+  # Python), without moving it (its scripts do not run under `set -u`).
+  get_depot_tools
   (
     set +u
     cd "$WORK/depot_tools"
@@ -193,6 +239,12 @@ sync() {
     bootstrap_python3
   )
   use_depot_tools
+  if [[ -n "$CEF_TARGET" ]]; then
+    # Chromium's hooks unpack the toolchain; the tree may still be another
+    # version's, or not there.
+    fetch_vs_toolchain
+    use_win_toolchain "$WORK/vs_toolchain.py"
+  fi
 
   # The update below wants CEF's files as git has them: take the last
   # build's patches/ out again.
@@ -216,6 +268,8 @@ sync() {
   # The first checkout clones CEF there and copies it to src/cef; build
   # output of other branches is parked there.
   rm -rf "$WORK/cef" "$WORK"/out_*
+  [[ -z "$CEF_TARGET" ]] || grep -q target_os "$WORK/chromium/.gclient" ||
+    fail "$WORK/chromium/.gclient names no target_os: the tree was not checked out for a cross build. Build with CEF_FRESH=true."
 
   # The version is computed from git, as make_distrib.py will do; it names
   # the archive, so a mismatch is better found now than after the build.
@@ -227,7 +281,7 @@ sync() {
   # files are translated and configured. They change no commit, so the
   # version stays the one checked above.
   local patch
-  for patch in "$REPO_DIR"/patches/*.patch; do
+  for patch in "${PATCHES[@]}"; do
     echo "Applying $(basename "$patch")"
     git -C "$SRC/cef" apply "$patch" || fail "$(basename "$patch") does not apply to CEF $CEF_VERSION."
   done
@@ -246,9 +300,47 @@ sync() {
   echo "Disk: $(disk)"
 }
 
-# One hash over patches/: which patches a tree was made with.
+# One hash over PATCHES: which patches a tree was made with.
 patches_hash() {
-  cat "$REPO_DIR"/patches/*.patch | sha256 | cut -d' ' -f1
+  cat "${PATCHES[@]}" | sha256 | cut -d' ' -f1
+}
+
+# depot_tools in WORK at DEPOT_TOOLS_COMMIT.
+get_depot_tools() {
+  if [[ ! -d "$WORK/depot_tools" ]]; then
+    git clone --quiet https://chromium.googlesource.com/chromium/tools/depot_tools.git "$WORK/depot_tools"
+  else
+    git -C "$WORK/depot_tools" fetch --quiet origin
+  fi
+  git -C "$WORK/depot_tools" checkout --quiet "$DEPOT_TOOLS_COMMIT"
+}
+
+# Downloads the Chromium version's build/vs_toolchain.py to WORK: it names
+# the Visual Studio and Windows SDK Chromium wants, before there is a tree.
+fetch_vs_toolchain() {
+  mkdir -p "$WORK"
+  curl -fsSL "https://chromium.googlesource.com/chromium/src/+/refs/tags/$CHROMIUM_VERSION/build/vs_toolchain.py?format=TEXT" |
+    base64 -d > "$WORK/vs_toolchain.py"
+}
+
+# Prints what a vs_toolchain.py ($2) sets $1 to: TOOLCHAIN_HASH = '3bfcb536c8'.
+vs_toolchain_value() {
+  sed -n "s/^$1 = '\(.*\)'$/\1/p" "$2"
+}
+
+# Points Chromium's hooks and GN at our package of Visual Studio and the
+# Windows SDK instead of Google's own, which only Google can download
+# (docs/win_cross.md, "If you're not at Google"). $1 is the vs_toolchain.py
+# that names the toolchain Chromium wants.
+use_win_toolchain() {
+  local wanted zips
+  wanted="$(vs_toolchain_value TOOLCHAIN_HASH "$1")"
+  [[ -n "$wanted" ]] || fail "$1 names no TOOLCHAIN_HASH."
+  zips=("$WIN_TOOLCHAIN/$wanted"/*.zip)
+  [[ -f "${zips[0]}" ]] ||
+    fail "No package of Visual Studio for Chromium's toolchain $wanted in $WIN_TOOLCHAIN. Run the workflow with \"toolchain\" ticked."
+  export DEPOT_TOOLS_WIN_TOOLCHAIN=1 DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL="$WIN_TOOLCHAIN/$wanted"
+  export "GYP_MSVS_HASH_$wanted=$(basename "${zips[0]}" .zip)"
 }
 
 # Fails unless GN resolved the codec args as EXPECTED_ARGS says.
@@ -260,6 +352,8 @@ check_args() {
   echo "$actual"
   [[ "$actual" == "$EXPECTED_ARGS" ]] ||
     fail "GN resolved the codec args differently (above); expected: $(echo "$EXPECTED_ARGS" | tr '\n' ';')"
+  [[ -z "$CEF_TARGET" || "$(cd "$SRC" && gn args "$OUT" --short --list=target_os)" == 'target_os = "win"' ]] ||
+    fail "GN did not configure a build for Windows."
 }
 
 # Builds TARGETS, which make_distrib.py takes the files from. Ninja
@@ -271,6 +365,13 @@ build() {
   # Chromium's own Python. /usr/bin/python3 asks xcodebuild for one, and
   # Xcode 27 rejects the SDK link that rustc passes it in SDKROOT.
   export PATH="$SRC/third_party/cpython3/host/bin:$PATH"
+  if [[ -n "$CEF_TARGET" ]]; then
+    use_win_toolchain "$SRC/build/vs_toolchain.py"
+    # The toolchain is in a folder that ignores case (ciopfs, a FUSE mount),
+    # as the SDK's headers need; a restart unmounts it. This mounts it again
+    # and unpacks nothing that is there.
+    (cd "$SRC" && python3 build/vs_toolchain.py update --force)
+  fi
   # shellcheck disable=SC2086 # TARGETS is a list
   NINJA_STATUS="[%p %f/%t %e] " "$NINJA" -C "$OUT" -j "$(getconf _NPROCESSORS_ONLN)" $TARGETS ||
     fail "ninja failed with exit code $?."
@@ -303,6 +404,9 @@ distrib() {
     if [[ "$OS" == Darwin ]]; then
       tr '\n' ' ' < "$WORK/xcode-version"
       echo
+    fi
+    if [[ -n "$CEF_TARGET" ]]; then
+      echo "built on Linux with Visual Studio and Windows SDK package $(basename "$WIN_TOOLCHAIN"/*/*.zip .zip)"
     fi
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
       echo "runner: our own, $(host_os)"
@@ -361,6 +465,11 @@ tree_is_current() {
 # already, builds and makes the distribution. Run again after an
 # interruption, it carries on where it stopped.
 local_build() {
+  [[ "$OS" != MINGW* ]] || fail "The build for Windows runs on Linux; Windows does win-toolchain and win-check."
+  if [[ -n "$CEF_TARGET" ]]; then
+    # Chromium mounts the Windows SDK with ciopfs, which it brings along.
+    command -v fusermount > /dev/null || fail "fusermount is missing (the package fuse, FUSE 2)."
+  fi
   if [[ "$OS" == Darwin ]]; then
     # ANGLE compiles its Metal shaders with it; from Xcode 27 on it is a
     # download of its own, and the build fails hours in without it.
@@ -402,6 +511,81 @@ local_build() {
   build
   distrib
   echo "Made $DIST_DIR/$PLATFORM/$DIST_NAME.tar.bz2."
+}
+
+# On Windows with Visual Studio 2026 (GitHub's runner): packages it and the
+# Windows SDK Chromium asks for, as Chromium's docs/win_cross.md says, and
+# encrypts the package with WIN_TOOLCHAIN_KEY into
+# RUNNER_TEMP/win-toolchain/<the toolchain Chromium asks for>/. Encrypted,
+# because the workflow hands it to the Linux job as an artifact, which anyone
+# can download, and Microsoft's files are not ours to give away.
+win_toolchain() {
+  [[ "$OS" == MINGW* ]] || fail "win-toolchain runs on Windows, under Git Bash."
+  : "${WIN_TOOLCHAIN_KEY:?WIN_TOOLCHAIN_KEY is required}"
+  local vs="$WORK/vs_toolchain.py" kits="/c/Program Files (x86)/Windows Kits/10" sdk wanted zips out
+  fetch_vs_toolchain
+  wanted="$(vs_toolchain_value TOOLCHAIN_HASH "$vs")"
+  sdk="$(vs_toolchain_value SDK_VERSION "$vs")"
+  [[ -n "$wanted" ]] || fail "$vs names no TOOLCHAIN_HASH."
+  [[ "$sdk" == "$WIN_SDK_VERSION" ]] ||
+    fail "Chromium $CHROMIUM_VERSION wants the Windows SDK $sdk, not $WIN_SDK_VERSION: change WIN_SDK_VERSION, WIN_SDK_URL and WIN_SDK_SHA256."
+  if [[ ! -d "$kits/Include/$sdk" || ! -d "$kits/Debuggers" ]]; then
+    echo "Installing the Windows SDK $sdk"
+    curl -fsSL -o "$WORK/winsdksetup.exe" "$WIN_SDK_URL"
+    echo "$WIN_SDK_SHA256  $WORK/winsdksetup.exe" | sha256 -c
+    # Every feature: the package wants the debuggers. Git Bash would turn
+    # /q into a path.
+    MSYS_NO_PATHCONV=1 "$WORK/winsdksetup.exe" /features + /q /norestart
+  fi
+  get_depot_tools
+  # Writes <the package's hash>.zip next to itself. It knows one Visual
+  # Studio, the one Chromium wants.
+  rm -f "$WORK"/depot_tools/win_toolchain/*.zip
+  (cd "$WORK/depot_tools/win_toolchain" &&
+    python package_from_installed.py 2026 -w "$sdk" --allow_multiple_vs_installs)
+  zips=("$WORK"/depot_tools/win_toolchain/*.zip)
+  [[ -f "${zips[0]}" ]] || fail "package_from_installed.py made no zip."
+  out="${RUNNER_TEMP:-$WORK}/win-toolchain/$wanted"
+  rm -rf "$out"
+  mkdir -p "$out"
+  openssl enc -aes-256-cbc -pbkdf2 -pass env:WIN_TOOLCHAIN_KEY \
+    -in "${zips[0]}" -out "$out/$(basename "${zips[0]}").enc"
+  ls -lh "$out"
+}
+
+# On Linux: decrypts the package the workflow's Windows job made (downloaded
+# to RUNNER_TEMP/win-toolchain) into WIN_TOOLCHAIN, in place of the one there.
+win_toolchain_unpack() {
+  : "${WIN_TOOLCHAIN_KEY:?WIN_TOOLCHAIN_KEY is required}"
+  local enc dir
+  for enc in "${RUNNER_TEMP:?}"/win-toolchain/*/*.zip.enc; do
+    [[ -f "$enc" ]] || fail "No packaged toolchain in $RUNNER_TEMP/win-toolchain."
+    dir="$WIN_TOOLCHAIN/$(basename "$(dirname "$enc")")"
+    # Decrypted first: a wrong key must not cost the package that is there.
+    openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WIN_TOOLCHAIN_KEY \
+      -in "$enc" -out "${enc%.enc}"
+    rm -rf "$WIN_TOOLCHAIN"
+    mkdir -p "$dir"
+    mv "${enc%.enc}" "$dir/"
+    ls -lh "$dir"
+  done
+}
+
+# On Windows: the archive local made is whole, and Windows loads its
+# libcef.dll (a 64-bit library whose imports all resolve). Whether CEF works
+# only Magnetite shows.
+win_check() {
+  [[ "$OS" == MINGW* ]] || fail "win-check runs on Windows, under Git Bash."
+  local dist="$DIST_DIR/$PLATFORM" out="$WORK/check"
+  (cd "$dist" && sha256 -c "$DIST_NAME.tar.bz2.sha256")
+  rm -rf "$out"
+  mkdir -p "$out"
+  tar -C "$out" -xjf "$dist/$DIST_NAME.tar.bz2"
+  ls -lh "$out/$DIST_NAME/Release"
+  python -c 'import ctypes, sys; ctypes.WinDLL(sys.argv[1])' \
+    "$(cygpath -w "$out/$DIST_NAME/Release/libcef.dll")" ||
+    fail "Windows does not load libcef.dll."
+  echo "Windows loads libcef.dll."
 }
 
 # Publishes what local made, from this machine: gh must be signed in with
@@ -472,8 +656,11 @@ case "${1:-}" in
   publish-local) publish_local ;;
   release-state) release_state ;;
   publish) publish ;;
+  win-toolchain) win_toolchain ;;
+  win-toolchain-unpack) win_toolchain_unpack ;;
+  win-check) win_check ;;
   *)
-    echo "usage: $0 local|publish-local|release-state|publish" >&2
+    echo "usage: $0 local|publish-local|release-state|publish|win-toolchain|win-toolchain-unpack|win-check" >&2
     exit 2
     ;;
 esac
