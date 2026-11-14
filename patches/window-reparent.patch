@@ -1,0 +1,187 @@
+--- a/libcef/browser/views/window_impl.cc
++++ b/libcef/browser/views/window_impl.cc
+@@ -152,6 +152,8 @@
+   CEF_REQUIRE_VALID_RETURN_VOID();
+   if (widget_) {
+     shown_as_browser_modal_ = false;
++    // A Window with a parent moves to the parent its delegate names now.
++    cef_window_view()->UpdateParent();
+     widget_->Show();
+   }
+ }
+--- a/libcef/browser/views/window_view.cc
++++ b/libcef/browser/views/window_view.cc
+@@ -1126,6 +1126,59 @@
+   *dialog_top_y = bounds.y();
+ }
+ 
++void CefWindowView::UpdateParent() {
++  // Only a Window that was created with a parent can get another one.
++  views::Widget* old_host = host_widget();
++  views::Widget* widget = GetWidget();
++  if (!old_host || !widget || !cef_delegate()) {
++    return;
++  }
++
++  CefRefPtr<CefWindow> cef_window = GetCefWindow();
++  bool is_menu = false;
++  bool can_activate_menu = true;
++  CefRefPtr<CefWindow> parent_window = cef_delegate()->GetParentWindow(
++      cef_window, &is_menu, &can_activate_menu);
++  if (!parent_window || is_menu || parent_window->IsSame(cef_window)) {
++    return;
++  }
++  views::Widget* new_host =
++      static_cast<CefWindowImpl*>(parent_window.get())->widget();
++  if (!new_host || new_host == old_host) {
++    return;
++  }
++
++#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(SUPPORTS_OZONE_X11)
++  if (UsesX11()) {
++    // As in CreateWidget and WindowClosing.
++    auto x11window =
++        static_cast<x11::Window>(view_util::GetWindowHandle(widget));
++    auto old_parent = static_cast<gfx::AcceleratedWidget>(
++        view_util::GetWindowHandle(old_host));
++    auto new_parent = static_cast<gfx::AcceleratedWidget>(
++        view_util::GetWindowHandle(new_host));
++    CHECK(x11window != x11::Window::None && old_parent && new_parent);
++
++    auto* delegate = ui::LinuxUiDelegate::GetInstance();
++    delegate->SetTransientWindowForParent(
++        old_parent, static_cast<gfx::AcceleratedWidget>(x11::Window::None));
++    x11::Connection::Get()->SetProperty(
++        x11window, x11::Atom::WM_TRANSIENT_FOR, x11::Atom::WINDOW, new_parent);
++    delegate->SetTransientWindowForParent(
++        new_parent, static_cast<gfx::AcceleratedWidget>(x11window));
++  }
++#endif
++#endif  // BUILDFLAG(IS_LINUX)
++
++  // The platform's own reparenting. Under Wayland it moves our wl_subsurface
++  // into the new parent (WaylandBubble::SetParentWidget).
++  widget->Reparent(new_host);
++
++  host_widget_destruction_observer_ =
++      std::make_unique<WidgetDestructionObserver>(new_host);
++}
++
+ views::Widget* CefWindowView::host_widget() const {
+   if (host_widget_destruction_observer_) {
+     return host_widget_destruction_observer_->widget();
+--- a/libcef/browser/views/window_view.h
++++ b/libcef/browser/views/window_view.h
+@@ -138,6 +138,10 @@
+   // during initialization and destruction.
+   views::Widget* host_widget() const;
+ 
++  // Asks the delegate for the parent Window again and, if it names another
++  // one than the Widget that hosts us, makes that one our parent.
++  void UpdateParent();
++
+   bool IsAlloyStyle() const { return is_alloy_style_; }
+   bool IsChromeStyle() const { return !is_alloy_style_; }
+ 
+--- a/patch/patch.cfg
++++ b/patch/patch.cfg
+@@ -918,5 +918,11 @@
+     # request context via CefPreferenceRegistrar::SetDefaultPreference.
+     # https://github.com/chromiumembedded/cef/issues/4276
+     'name': 'signin_allowed_4276',
++  },
++  {
++    # Magnetite: views::Widget::Reparent reaches the platform window, so a
++    # Wayland bubble (wl_subsurface) moves into its new parent.
++    # Implements the TODO of https://crbug.com/40284685 for Wayland.
++    'name': 'magnetite_wayland_reparent',
+   }
+ ]
+diff --git a/patch/patches/magnetite_wayland_reparent.patch b/patch/patches/magnetite_wayland_reparent.patch
+new file mode 100644
+--- /dev/null
++++ b/patch/patches/magnetite_wayland_reparent.patch
+@@ -0,0 +1,82 @@
++diff --git ui/ozone/platform/wayland/host/wayland_bubble.cc ui/ozone/platform/wayland/host/wayland_bubble.cc
++--- ui/ozone/platform/wayland/host/wayland_bubble.cc
+++++ ui/ozone/platform/wayland/host/wayland_bubble.cc
++@@ -102,6 +102,28 @@
++   WaylandWindow::Deactivate();
++ }
++ 
+++void WaylandBubble::SetParentWidget(gfx::AcceleratedWidget parent) {
+++  WaylandWindow* new_parent = connection()->window_manager()->GetWindow(parent);
+++  if (!new_parent || new_parent == this || new_parent == parent_window()) {
+++    return;
+++  }
+++
+++  // A wl_subsurface keeps its parent for life. Hide drops it and Show makes
+++  // another one, in the parent of that moment.
+++  const bool shown = !!subsurface_;
+++  if (shown) {
+++    Hide();
+++  }
+++  if (parent_window()) {
+++    parent_window()->RemoveBubble(this);
+++  }
+++  set_parent_window(new_parent);
+++  new_parent->AddBubble(this);
+++  if (shown) {
+++    Show(/*inactive=*/true);
+++  }
+++}
+++
++ void WaylandBubble::UpdateWindowScale(bool update_bounds) {
++   auto weak_this = AsWeakPtr();
++   WaylandWindow::UpdateWindowScale(update_bounds);
++diff --git ui/ozone/platform/wayland/host/wayland_bubble.h ui/ozone/platform/wayland/host/wayland_bubble.h
++--- ui/ozone/platform/wayland/host/wayland_bubble.h
+++++ ui/ozone/platform/wayland/host/wayland_bubble.h
++@@ -32,6 +32,7 @@
++   void SetInputRegion(std::optional<std::vector<gfx::Rect>> region_px) override;
++   void Activate() override;
++   void Deactivate() override;
+++  void SetParentWidget(gfx::AcceleratedWidget parent) override;
++ 
++   // WaylandWindow overrides:
++   void UpdateWindowScale(bool update_bounds) override;
++diff --git ui/platform_window/platform_window.cc ui/platform_window/platform_window.cc
++--- ui/platform_window/platform_window.cc
+++++ ui/platform_window/platform_window.cc
++@@ -18,6 +18,8 @@
++   return false;
++ }
++ 
+++void PlatformWindow::SetParentWidget(gfx::AcceleratedWidget parent) {}
+++
++ void PlatformWindow::SetZOrderLevel(ZOrderLevel order) {}
++ 
++ ZOrderLevel PlatformWindow::GetZOrderLevel() const {
++diff --git ui/platform_window/platform_window.h ui/platform_window/platform_window.h
++--- ui/platform_window/platform_window.h
+++++ ui/platform_window/platform_window.h
++@@ -131,6 +131,10 @@
++   // default returns false.
++   virtual bool ShouldWindowContentsBeTransparent() const;
++ 
+++  // Gives the window another parent. Only for windows that are placed inside
+++  // their parent (Wayland bubbles); the default implementation does nothing.
+++  virtual void SetParentWidget(gfx::AcceleratedWidget parent);
+++
++   // Sets and gets ZOrderLevel of the PlatformWindow. Such platforms that do not
++   // support ordering, should not implement these methods as the default
++   // implementation always returns ZOrderLevel::kNormal value.
++diff --git ui/views/widget/desktop_aura/desktop_window_tree_host_platform.cc ui/views/widget/desktop_aura/desktop_window_tree_host_platform.cc
++--- ui/views/widget/desktop_aura/desktop_window_tree_host_platform.cc
+++++ ui/views/widget/desktop_aura/desktop_window_tree_host_platform.cc
++@@ -648,6 +648,9 @@
++   if (window_parent_) {
++     window_parent_->window_children_.insert(this);
++   }
+++  if (platform_window()) {
+++    platform_window()->SetParentWidget(parent);
+++  }
++ }
++ 
++ void DesktopWindowTreeHostPlatform::Activate() {
