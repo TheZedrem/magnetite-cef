@@ -86,18 +86,21 @@
  
 --- a/patch/patch.cfg
 +++ b/patch/patch.cfg
-@@ -918,5 +918,11 @@
-     # request context via CefPreferenceRegistrar::SetDefaultPreference.
-     # https://github.com/chromiumembedded/cef/issues/4276
-     'name': 'signin_allowed_4276',
-+  },
+@@ -16,6 +16,14 @@
+ # report that the patch relates to.
+
+ patches = [
 +  {
 +    # Magnetite: views::Widget::Reparent reaches the platform window, so a
 +    # Wayland bubble (wl_subsurface) moves into its new parent.
 +    # Implements the TODO of https://crbug.com/40284685 for Wayland.
++    # First in the list: CEF adds its own patches at the end, where a
++    # change of ours stops applying with the next CEF version.
 +    'name': 'magnetite_wayland_reparent',
-   }
- ]
++  },
+   {
+     # Necessary for grit integration.
+     'name': 'gritsettings',
 diff --git a/patch/patches/magnetite_wayland_reparent.patch b/patch/patches/magnetite_wayland_reparent.patch
 new file mode 100644
 --- /dev/null
