@@ -50,9 +50,11 @@ gh attestation verify <archive> --repo magnetite-browser/magnetite-cef \
   --source-ref refs/heads/main
 ```
 
-The workflow builds and releases from `main` only; in the repository's
-settings, protect `main` (changes by reviewed pull request only) and turn on
-immutable releases, so a published archive cannot be replaced.
+The workflow builds and releases from `main` only. `main` is protected: it
+changes by pull request only, with an approval from the code owner
+(`.github/CODEOWNERS`), and cannot be force-pushed or deleted. Turn on
+immutable releases in the repository's settings, so a published archive
+cannot be replaced.
 
 The workflow builds on machines of ours (below), so the attestation says which
 code was built by which workflow, not that the machine was clean.
@@ -66,6 +68,9 @@ and the build itself, by building that commit again.
 
 Actions → Build CEF → Run workflow on `main`, with the full CEF version, as
 CEF names its archives (`156.0.15+gcf671c0+chromium-156.0.8078.80`).
+
+The run then waits for approval: its jobs start once a reviewer of the
+environment `build` (Settings → Environments) approved it on the run's page.
 
 It builds both platforms at once, each in one job on a machine of our own
 (below), and publishes one release once both are done. A failed platform

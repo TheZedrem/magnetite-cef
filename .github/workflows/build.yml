@@ -39,9 +39,20 @@ env:
   CEF_REVISION: ${{ inputs.revision }}
 
 jobs:
+  # A build starts once a reviewer of the environment "build" approved the
+  # run (README, "Building a release"). The environment takes main only.
+  approve:
+    name: Wait for approval
+    # Releases come from reviewed code only (README, "Checking a release").
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: build
+    steps:
+      - run: "true"
+
   build-mac:
     name: Build for macOS
-    # Releases come from reviewed code only (README, "Checking a release").
+    needs: approve
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, macOS, ARM64, cef-builder]
     # A build of everything took 87 minutes on a faster Mac; a self-hosted
@@ -75,6 +86,7 @@ jobs:
 
   build-linux:
     name: Build for Linux
+    needs: approve
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 720
