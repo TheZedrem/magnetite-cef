@@ -1,0 +1,21 @@
+--- a/libcef/browser/views/window_view.cc
++++ b/libcef/browser/views/window_view.cc
+@@ -696,6 +696,18 @@ void CefWindowView::CreateWidget(gfx::AcceleratedWidget parent_widget) {
+ 
+   cef_widget->Initialized();
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Under Wayland a toplevel asks the compositor whether it draws the
++  // window's frame. Views asks for the compositor's frame unless the widget
++  // was made without the standard one, which this file does on Windows
++  // only; a frameless window then gets the compositor's title bar on top of
++  // its own. Under X11 SetUseOSWindowFrame (below) removes the frame.
++  if (is_frameless_ && !UsesX11()) {
++    widget->set_frame_type(views::Widget::FrameType::kForceCustom);
++    widget->FrameTypeChanged();
++  }
++#endif
++
+ #if BUILDFLAG(IS_LINUX)
+ #if BUILDFLAG(SUPPORTS_OZONE_X11)
+   if (UsesX11()) {
