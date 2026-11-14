@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews pull requests: useful, low noise, nothing kept or shared
+# beyond the review itself.
+language: en-US
+tone_instructions: >-
+  Be brief and concrete. Plain English. Only comment when something is wrong,
+  risky or clearly simpler another way.
+early_access: false
+
+reviews:
+  profile: chill
+  # No automatic approvals or change requests; maintainers decide.
+  auto_approvals:
+    enabled: false
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: ["^main$"]
+  path_filters:
+    - "!LICENSE"
+    - "!LICENSES/**"
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: warning
+      requirements: >-
+        Conventional Commits with a short subject, e.g. "fix: frameless
+        windows get no compositor title bar under Wayland". Types: feat, fix,
+        docs, refactor, test, build, ci, chore, perf.
+  path_instructions:
+    - path: "patches/**"
+      instructions: |
+        Magnetite's changes to CEF, and through CEF to Chromium. Nothing here is compiled
+        before it is merged: the workflow builds from main only, and a mistake costs a build
+        of several hours. Read the C++ as a compiler would and flag what cannot build: a
+        name that is not declared, a missing include, a signature that does not match.
+        tools/build-cef.sh applies the patches with `git apply` in the order of their file
+        names, to CEF at the version being built. Flag any change that breaks one of these:
+        - A patch applies to more than the one CEF version it was written for. A hunk at a
+          place CEF itself keeps changing does not: the end of CEF's patch/patch.cfg, where
+          CEF adds its own patches, is such a place.
+        - A patch that needs another one comes after it in file-name order, and the README's
+          table says so.
+        - One Linux binary runs under X11 and under Wayland. X11 calls run behind UsesX11()
+          and SUPPORTS_OZONE_X11, platform code behind its BUILDFLAG.
+        - Windows of other kinds, and the platforms a patch was not made for, behave as
+          before. Where they cannot, the README's table says what changes for them.
+        - A pointer to a window or widget that is kept across a call which can destroy it
+          is a weak pointer or has an observer.
+        - A change to Chromium is a CEF patch file (patch/patches/<name>.patch, paths without
+          a/ and b/) with its entry in CEF's patch/patch.cfg, both added by the patch.
+        - Every patch has a row in the README's table that says what it changes and for
+          which platforms.
+    - path: "tools/**"
+      instructions: |
+        The build, in bash that runs under bash 3.2 (macOS) and on Linux, with
+        `set -euo pipefail`. Flag any change that breaks one of these:
+        - A step that fails stops the build with a message that names the way out. Nothing
+          carries on to a release with a check skipped: the codec GN args, the CEF version
+          of the checkout, the patches the tree was made with, the SHA-256 of each archive.
+        - A release is never replaced, and it holds every platform's archive or does not
+          exist.
+        - The stages that build run code they download (Chromium's hooks and tools) and get
+          no token. gh is called only by the stages that publish.
+        - What the script downloads is pinned: CEF's checkout tool at the CEF commit,
+          depot_tools at DEPOT_TOOLS_COMMIT.
+        - No secret is printed.
+    - path: "build-server/**"
+      instructions: |
+        Sets up a Mac whose builds end up in every Magnetite release. The script explains
+        each step, asks before anything destructive and can be run again. The runner's token
+        goes in through the environment, never on a command line. The runner runs as a user
+        without admin rights and without a login shell.
+    - path: ".github/**"
+      instructions: |
+        Workflows pin every action to a full commit SHA and start with `permissions: {}`.
+        The jobs that build run on our own machines with a read-only token, from main only,
+        after the approval of the environment "build"; only the publish job may write (the
+        release and its attestation). No workflow starts on a pull request: a pull request
+        must never reach the self-hosted runners.
+    - path: "**/*.md"
+      instructions: |
+        Plain, short English. Facts (versions, commands, file names, times, sizes) must match
+        the script and the workflow. No marketing language.
+
+chat:
+  art: false
+  auto_reply: false
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
+
+knowledge_base:
+  # No data kept between reviews (learnings, indexed issues and PRs).
+  opt_out: true
+  web_search:
+    enabled: false
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - README.md
+  jira:
+    usage: disabled
+  linear:
+    usage: disabled
+  mcp:
+    usage: disabled
+  automatic_linking_mode: disabled
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
