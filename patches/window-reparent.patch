@@ -16,7 +16,6 @@
  }
  
 +void CefWindowView::UpdateParent() {
-+#if BUILDFLAG(IS_LINUX)
 +  // Only a Window that was created with a parent can get another one.
 +  views::Widget* old_host = host_widget();
 +  views::Widget* widget = GetWidget();
@@ -38,6 +37,7 @@
 +    return;
 +  }
 +
++#if BUILDFLAG(IS_LINUX)
 +#if BUILDFLAG(SUPPORTS_OZONE_X11)
 +  if (UsesX11()) {
 +    // As in CreateWidget and WindowClosing.
@@ -58,14 +58,14 @@
 +        new_parent, static_cast<gfx::AcceleratedWidget>(x11window));
 +  }
 +#endif
++#endif  // BUILDFLAG(IS_LINUX)
 +
-+  // Under Wayland this moves our wl_subsurface into the new parent
-+  // (WaylandBubble::SetParentWidget).
++  // The platform's own reparenting. Under Wayland it moves our wl_subsurface
++  // into the new parent (WaylandBubble::SetParentWidget).
 +  widget->Reparent(new_host);
 +
 +  host_widget_destruction_observer_ =
 +      std::make_unique<WidgetDestructionObserver>(new_host);
-+#endif  // BUILDFLAG(IS_LINUX)
 +}
 +
  views::Widget* CefWindowView::host_widget() const {
@@ -78,7 +78,7 @@
    views::Widget* host_widget() const;
  
 +  // Asks the delegate for the parent Window again and, if it names another
-+  // one than the Widget that hosts us, makes that one our parent. Linux only.
++  // one than the Widget that hosts us, makes that one our parent.
 +  void UpdateParent();
 +
    bool IsAlloyStyle() const { return is_alloy_style_; }
