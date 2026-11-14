@@ -482,9 +482,21 @@ local_build() {
   if [[ "${CEF_FRESH:-}" == true ]]; then
     # A cross build leaves the Windows SDK mounted in the tree (ciopfs, in
     # the depot_tools Chromium brings along), which rm cannot delete.
-    local sdk="$SRC/third_party/depot_tools/win_toolchain/vs_files"
-    if [[ -n "$CEF_TARGET" ]] && mountpoint -q "$sdk" 2> /dev/null; then
-      fusermount -u "$sdk"
+    # Checked from its parent: a mount whose ciopfs died cannot be looked
+    # at itself.
+    local sdk="$SRC/third_party/depot_tools/win_toolchain/vs_files" mounted=0
+    if [[ -n "$CEF_TARGET" && -d "$(dirname "$sdk")" ]]; then
+      # 0 mounted, 32 not; anything else (no mountpoint, a dead mount) is
+      # no answer, and rm would delete the SDK through the mount.
+      mountpoint -q "$sdk" || mounted=$?
+      case "$mounted" in
+        0)
+          fusermount -u "$sdk" ||
+            fail "Cannot unmount the Windows SDK at $sdk. Stop what uses it (fuser -m $sdk) or restart the machine, then build with CEF_FRESH=true again."
+          ;;
+        32) ;;
+        *) fail "Cannot tell whether the Windows SDK is mounted at $sdk (mountpoint, of util-linux, exited with $mounted). Unmount it (fusermount -u $sdk) or restart the machine, then build with CEF_FRESH=true again." ;;
+      esac
     fi
     echo "Deleting $WORK"
     rm -rf "${WORK:?}"
