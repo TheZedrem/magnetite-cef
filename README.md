@@ -15,6 +15,11 @@ before it is configured. A patch that no longer applies stops the build.
 | `extension-views-excluded.patch` | Extension popups, side panels, background pages and offscreen documents are hosted by Chrome and never get a CEF browser. CEF waited for one all the same, which delayed every extension popup; with the patch it does not. |
 | `wayland-child-windows.patch` | Under Wayland, a window with a parent is a subsurface of that parent, which keeps its place in it; Magnetite's pages are such windows. CEF made it a toplevel and set it up with X11 calls, the last of which stops the program under Wayland. With the patch those calls run under X11 only. Linux only. |
 
+Every archive names the patches it was built with in
+`Release/magnetite-patches.txt`, one file name a line. Magnetite packages
+the file next to the library and reads from it what its CEF can do: with
+`wayland-child-windows.patch` in the list it runs as a Wayland client.
+
 ## Releases
 
 One release per CEF version, tagged with it (`156.0.15`; another build of

@@ -275,9 +275,15 @@ distrib() {
   local out="$WORK/distrib" dist="$DIST_DIR/$PLATFORM"
   rm -rf "$out" "$dist"
   mkdir -p "$out" "$dist"
-  (cd "$SRC/cef/tools" && CEF_ARCHIVE_FORMAT=tar.bz2 python3 make_distrib.py \
-    --output-dir="$out" --ninja-build "--$ARCH-build" --minimal --no-symbols --no-docs)
-  [[ -f "$out/$DIST_NAME.tar.bz2" ]] || fail "Expected $DIST_NAME.tar.bz2, got: $(ls "$out")"
+  # The folder only: the archive is made below, once the patch list is in.
+  (cd "$SRC/cef/tools" && python3 make_distrib.py --output-dir="$out" --ninja-build \
+    "--$ARCH-build" --minimal --no-symbols --no-docs --no-archive)
+  [[ -d "$out/$DIST_NAME/Release" ]] || fail "Expected $DIST_NAME/Release, got: $(ls "$out")"
+  # Which of our patches this build has, one file name a line, next to the
+  # library: Magnetite reads from it what its CEF can do (Wayland).
+  (cd "$REPO_DIR/patches" && ls -- *.patch) > "$out/$DIST_NAME/Release/magnetite-patches.txt"
+  # COPYFILE_DISABLE: no ._ files from macOS' tar.
+  COPYFILE_DISABLE=1 tar -C "$out" -cjf "$out/$DIST_NAME.tar.bz2" "$DIST_NAME"
   mv "$out/$DIST_NAME.tar.bz2" "$dist/"
   (cd "$dist" && sha256 "$DIST_NAME.tar.bz2" > "$DIST_NAME.tar.bz2.sha256")
   cp "$OUT/args.gn" "$dist/args.gn"
