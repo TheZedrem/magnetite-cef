@@ -480,6 +480,12 @@ local_build() {
     command -v pkg-config > /dev/null || fail "pkg-config is missing (the package pkgconf or pkg-config)."
   fi
   if [[ "${CEF_FRESH:-}" == true ]]; then
+    # A cross build leaves the Windows SDK mounted in the tree (ciopfs, in
+    # the depot_tools Chromium brings along), which rm cannot delete.
+    local sdk="$SRC/third_party/depot_tools/win_toolchain/vs_files"
+    if [[ -n "$CEF_TARGET" ]] && mountpoint -q "$sdk" 2> /dev/null; then
+      fusermount -u "$sdk"
+    fi
     echo "Deleting $WORK"
     rm -rf "${WORK:?}"
   fi
