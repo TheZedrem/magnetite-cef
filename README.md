@@ -51,8 +51,8 @@ gh attestation verify <archive> --repo magnetite-browser/magnetite-cef \
 ```
 
 The workflow builds and releases from `main` only. `main` is protected: it
-changes by pull request only, once CodeRabbit's review of the pull request
-has run (`.coderabbit.yaml`), for administrators as well, and cannot be
+changes by pull request only, once the pull request's CodeRabbit check has
+passed (`.coderabbit.yaml`), for administrators as well, and cannot be
 force-pushed or deleted. No person has to approve a pull request; a build
 needs an approval of its own (below). Turn on immutable releases in the
 repository's settings, so a published archive cannot be replaced.
