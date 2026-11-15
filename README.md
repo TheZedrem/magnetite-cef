@@ -5,6 +5,15 @@ The build of the Chromium Embedded Framework (CEF) that the
 CEF as its official builds are, plus the H.264, AAC and HEVC decoders those
 leave out. Without them, sites that serve only these formats do not play.
 
+> [!NOTE]
+> **This is a fork**, the CEF side of [my Magnetite fork](https://github.com/TheZedrem/magnetite), which aims to be a replacement for [Zen](https://zen-browser.app). Its `main` is [upstream](https://github.com/magnetite-browser/magnetite-cef)'s `main` with all of my patches merged in, together in one build to use and test.
+>
+> - Every fix or feature is a branch of its own, made from upstream's `main`. It goes upstream as its own pull request, and only after I have tested it on its branch and on this `main`.
+> - Each branch is tested on its own, then also merged into this `main` to test it together with the other patches.
+> - This `main` is never merged into upstream. Changes go upstream through their own branches only.
+>
+> **Patches here that upstream does not have yet:** none. Everything this fork's Magnetite needs is in upstream's releases (from 156.0.30: `window-reparent.patch` and the Wayland patches). Open, not merged here yet: [#14](https://github.com/magnetite-browser/magnetite-cef/pull/14), CEF for Windows built on Linux (an experiment, still in progress).
+
 ## Patches
 
 `patches/` holds Magnetite's own changes to CEF, applied to the checkout
