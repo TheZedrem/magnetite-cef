@@ -1,0 +1,3 @@
+# Git Bash on GitHub's Windows runner runs the script; a checkout there
+# would give it Windows line endings.
+*.sh text eol=lf
