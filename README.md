@@ -185,13 +185,20 @@ It needs:
   (`openssl rand -base64 32`). Artifacts of a public repository are open to
   everyone, and Microsoft's files are not ours to give away, so the package
   travels encrypted and its artifact is deleted after a day;
-- on the Linux runner `openssl` and `fusermount` (FUSE 2, the package
-  `fuse`): Chromium mounts the Windows SDK in a folder that ignores case.
+- on the Linux runner `openssl`, `fusermount` and FUSE 2's library
+  `libfuse.so.2` (the package `libfuse2t64` or `libfuse2` on Debian and
+  Ubuntu, `fuse-libs` on Fedora, `fuse2` on Arch; FUSE 3 alone is not
+  enough): Chromium mounts the Windows SDK in a folder that ignores case.
 
 CEF's tools take the platform from the machine they run on.
 `patches/cross/host-is-not-the-target.patch`, applied in a cross build only,
 lets `tools/build-cef.sh` name it instead; with it CEF writes the GN args it
 writes on Windows. The archive's patch list leaves it out.
+
+Those args (CDM host verification, the CDM's storage ID, RLZ) are for Windows
+and macOS only, and GN gives them to the toolchain of the building machine
+too, where Chromium refuses them. `patches/cross/host-toolchain-args.patch`
+switches them off there, as Chromium's own defaults do.
 
 Known or open:
 
