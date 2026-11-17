@@ -176,24 +176,27 @@ disk() {
 
 # The GN args on top of what CEF sets itself (tools/gn_args.py).
 #   proprietary_codecs, ffmpeg_branding  H.264, AAC and HEVC; the point of it.
-#   media_use_openh264=false             no OpenH264 software encoder (it also
-#                                        turns off WebRTC's rtc_use_h264).
-#                                        Macs encode H.264 in hardware; on
-#                                        Linux, WebRTC sends VP8/VP9 instead.
+#                                        With them Chromium also builds the
+#                                        OpenH264 encoder (media_use_openh264,
+#                                        rtc_use_h264), which WebRTC needs to
+#                                        send H.264 at all: without it, it
+#                                        does not offer the hardware encoder
+#                                        either (seen: a screen shared in a
+#                                        Microsoft Teams call did not arrive).
 #   symbol_level=0                       no debug symbols: a smaller tree.
 #   treat_warnings_as_errors=false       a newer macOS SDK than Chromium was
 #                                        tested with must not stop the build.
 # And the platform's own, PLATFORM_GN.
 gn_defines() {
   echo "is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome" \
-    "media_use_openh264=false symbol_level=0 treat_warnings_as_errors=false $PLATFORM_GN"
+    "symbol_level=0 treat_warnings_as_errors=false $PLATFORM_GN"
 }
 
 # The GN args the release must have, as `gn args --short` prints them.
 EXPECTED_ARGS='proprietary_codecs = true
 ffmpeg_branding = "Chrome"
-media_use_openh264 = false
-rtc_use_h264 = false'
+media_use_openh264 = true
+rtc_use_h264 = true'
 
 # Brings the tree in WORK to CEF_VERSION with patches/ applied, and
 # configures it. The first time that is a full checkout of Chromium with its
@@ -337,9 +340,10 @@ sync() {
   echo "Disk: $(disk)"
 }
 
-# One hash over PATCHES: which patches a tree was made with.
+# One hash over PATCHES and the GN args: what a tree was made and configured
+# with. A tree kept from a build with other args is configured again.
 patches_hash() {
-  cat "${PATCHES[@]}" | sha256 | cut -d' ' -f1
+  { cat "${PATCHES[@]}" && gn_defines; } | sha256 | cut -d' ' -f1
 }
 
 # depot_tools in WORK at DEPOT_TOOLS_COMMIT.
@@ -686,7 +690,7 @@ publish_local() {
   [[ "$GITHUB_SHA" == "$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)" ]] ||
     fail "This checkout is not at origin's main; the release would name a commit nobody can see there."
   [[ "$(cat "$WORK/patches-applied" 2> /dev/null)" == "$(patches_hash)" ]] ||
-    fail "The tree in $WORK was made with other patches than this commit has."
+    fail "The tree in $WORK was made with other patches or build settings than this commit has. Build it again (tools/build-cef.sh local), then publish."
   GITHUB_REPOSITORY="$(cd "$REPO_DIR" && gh repo view --json nameWithOwner --jq .nameWithOwner)"
   export GH_REPO="$GITHUB_REPOSITORY"
   local state
